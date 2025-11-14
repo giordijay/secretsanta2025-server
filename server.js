@@ -38,7 +38,7 @@ Draft.belongsTo(User, { foreignKey: 'who', as: 'Receiver' });
 
 // IMPORTANT: Set force: true only ONCE to recreate tables, then change back to false
 const FORCE_RECREATE_TABLES = false; // Set to true only if you need to recreate tables
-
+const PORT = process.env.PORT || 5000;
 sequelize.sync({ force: FORCE_RECREATE_TABLES, alter: false }).then(async () => {
   try {
     // Check if tables exist, create them if they don't
@@ -53,7 +53,7 @@ sequelize.sync({ force: FORCE_RECREATE_TABLES, alter: false }).then(async () => 
     
     console.log("Database synced");
     
-    app.listen(5000, () => console.log("Server running on http://localhost:5000"));
+    app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
   } catch (error) {
     console.error('Unable to connect to the database:', error);
   }
