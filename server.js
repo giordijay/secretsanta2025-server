@@ -17,6 +17,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Test route for connectivity
+app.get("/api/helloworld", (req, res) => {
+  res.json({ message: "Hello World! Server is running." });
+});
+
 app.use("/api/auth", authRoutes);
 app.use("/api/wishes", wishesRoutes);
 app.use("/api/notneeds", notneedsRoutes);
