@@ -1,7 +1,36 @@
 const express = require('express');
 const Wish = require('../models/wish');
 const User = require('../models/user');
+const sequelize = require('../config/database');
 const router = express.Router();
+
+// Helper function to execute Turso queries
+async function executeQuery(sql, params = []) {
+  if (sequelize.tursoClient) {
+    console.log('Executing Turso query:', sql, params);
+    const result = await sequelize.tursoClient.execute({ sql, args: params });
+    return result.rows;
+  } else {
+    const [results] = await sequelize.query(sql, { 
+      replacements: params,
+      type: sequelize.QueryTypes.SELECT 
+    });
+    return results;
+  }
+}
+
+async function executeUpdate(sql, params = []) {
+  if (sequelize.tursoClient) {
+    console.log('Executing Turso update:', sql, params);
+    const result = await sequelize.tursoClient.execute({ sql, args: params });
+    return result;
+  } else {
+    return await sequelize.query(sql, { 
+      replacements: params,
+      type: sequelize.QueryTypes.UPDATE
+    });
+  }
+}
 
 // GET /api/wishes - Get all wishes
 router.get('/', async (req, res) => {
@@ -47,22 +76,48 @@ router.post('/', async (req, res) => {
     }
 
     // Check if user exists
-    const user = await User.findByPk(userId);
-    if (!user) {
+    const users = await executeQuery(
+      'SELECT id FROM Users WHERE id = ?', 
+      [userId]
+    );
+    
+    if (!users || users.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const newWish = await Wish.create({ wish, userId });
+    // Create the wish
+    await executeUpdate(
+      'INSERT INTO Wishes (wish, userId, createdAt, updatedAt) VALUES (?, ?, datetime(\"now\"), datetime(\"now\"))',
+      [wish, userId]
+    );
     
-    // Return the wish with user info
-    const wishWithUser = await Wish.findByPk(newWish.id, {
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'username']
-      }]
-    });
+    // Get the created wish with user info
+    const createdWishes = await executeQuery(`
+      SELECT 
+        w.id, w.wish, w.userId,
+        u.id as user_id, u.name as user_name, u.username as user_username
+      FROM Wishes w
+      JOIN Users u ON w.userId = u.id
+      WHERE w.userId = ? 
+      ORDER BY w.id DESC 
+      LIMIT 1
+    `, [userId]);
     
-    res.status(201).json(wishWithUser);
+    if (createdWishes && createdWishes.length > 0) {
+      const wishData = createdWishes[0];
+      res.status(201).json({
+        id: wishData.id,
+        wish: wishData.wish,
+        userId: wishData.userId,
+        User: {
+          id: wishData.user_id,
+          name: wishData.user_name,
+          username: wishData.user_username
+        }
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to retrieve created wish' });
+    }
   } catch (error) {
     console.error('Error creating wish:', error);
     res.status(500).json({ error: 'Failed to create wish' });
@@ -106,12 +161,22 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    const wish = await Wish.findByPk(id);
-    if (!wish) {
+    // Check if wish exists
+    const wishes = await executeQuery(
+      'SELECT id FROM Wishes WHERE id = ?', 
+      [id]
+    );
+    
+    if (!wishes || wishes.length === 0) {
       return res.status(404).json({ error: 'Wish not found' });
     }
 
-    await wish.destroy();
+    // Delete the wish
+    await executeUpdate(
+      'DELETE FROM Wishes WHERE id = ?',
+      [id]
+    );
+    
     res.json({ message: 'Wish deleted successfully' });
   } catch (error) {
     console.error('Error deleting wish:', error);

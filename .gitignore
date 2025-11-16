@@ -1,0 +1,14 @@
+﻿# Ignora tutti i node_modules in ogni sottocartella
+node_modules/
+
+# Log
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build
+dist/
+build/

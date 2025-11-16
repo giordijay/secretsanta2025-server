@@ -1,26 +1,83 @@
 const express = require('express');
 const Draft = require('../models/draft');
 const User = require('../models/user');
+const sequelize = require('../config/database');
 const router = express.Router();
+
+// Helper function to execute Turso queries
+async function executeQuery(sql, params = []) {
+  if (sequelize.tursoClient) {
+    console.log('Executing Turso query:', sql, params);
+    const result = await sequelize.tursoClient.execute({ sql, args: params });
+    return result.rows;
+  } else {
+    const [results] = await sequelize.query(sql, { 
+      replacements: params,
+      type: sequelize.QueryTypes.SELECT 
+    });
+    return results;
+  }
+}
+
+async function executeUpdate(sql, params = []) {
+  if (sequelize.tursoClient) {
+    console.log('Executing Turso update:', sql, params);
+    const result = await sequelize.tursoClient.execute({ sql, args: params });
+    return result;
+  } else {
+    return await sequelize.query(sql, { 
+      replacements: params,
+      type: sequelize.QueryTypes.UPDATE
+    });
+  }
+}
 
 // GET /api/drafts - Get all drafts (Secret Santa assignments)
 router.get('/', async (req, res) => {
   try {
-    const drafts = await Draft.findAll({
-      include: [
-        {
-          model: User,
-          as: 'Giver',
-          attributes: ['id', 'name', 'username', 'picture']
-        },
-        {
-          model: User,
-          as: 'Receiver',
-          attributes: ['id', 'name', 'username', 'picture']
-        }
-      ]
-    });
-    res.json(drafts);
+    const drafts = await executeQuery(`
+      SELECT 
+        d.id,
+        d."from",
+        d.who,
+        d.createdAt,
+        d.updatedAt,
+        giver.id as giver_id,
+        giver.name as giver_name,
+        giver.username as giver_username,
+        giver.picture as giver_picture,
+        receiver.id as receiver_id,
+        receiver.name as receiver_name,
+        receiver.username as receiver_username,
+        receiver.picture as receiver_picture
+      FROM Drafts d
+      JOIN Users giver ON d."from" = giver.id
+      JOIN Users receiver ON d.who = receiver.id
+      ORDER BY d.id
+    `);
+
+    // Transform the flat result into nested objects
+    const formattedDrafts = drafts.map(draft => ({
+      id: draft.id,
+      from: draft.from,
+      who: draft.who,
+      createdAt: draft.createdAt,
+      updatedAt: draft.updatedAt,
+      Giver: {
+        id: draft.giver_id,
+        name: draft.giver_name,
+        username: draft.giver_username,
+        picture: draft.giver_picture
+      },
+      Receiver: {
+        id: draft.receiver_id,
+        name: draft.receiver_name,
+        username: draft.receiver_username,
+        picture: draft.receiver_picture
+      }
+    }));
+
+    res.json(formattedDrafts);
   } catch (error) {
     console.error('Error fetching drafts:', error);
     res.status(500).json({ error: 'Failed to fetch drafts' });
