@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const sequelize = require("./config/database");
@@ -10,8 +12,6 @@ const wishesRoutes = require("./routes/wishes");
 const notneedsRoutes = require("./routes/notneeds");
 const usersRoutes = require("./routes/users");
 const draftsRoutes = require("./routes/drafts");
-
-require("dotenv").config();
 
 const app = express();
 app.use(cors());

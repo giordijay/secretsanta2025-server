@@ -1,7 +1,36 @@
 const express = require('express');
 const Notneed = require('../models/notneed');
 const User = require('../models/user');
+const sequelize = require('../config/database');
 const router = express.Router();
+
+// Helper function to execute Turso queries
+async function executeQuery(sql, params = []) {
+  if (sequelize.tursoClient) {
+    console.log('Executing Turso query:', sql, params);
+    const result = await sequelize.tursoClient.execute({ sql, args: params });
+    return result.rows;
+  } else {
+    const [results] = await sequelize.query(sql, { 
+      replacements: params,
+      type: sequelize.QueryTypes.SELECT 
+    });
+    return results;
+  }
+}
+
+async function executeUpdate(sql, params = []) {
+  if (sequelize.tursoClient) {
+    console.log('Executing Turso update:', sql, params);
+    const result = await sequelize.tursoClient.execute({ sql, args: params });
+    return result;
+  } else {
+    return await sequelize.query(sql, { 
+      replacements: params,
+      type: sequelize.QueryTypes.UPDATE
+    });
+  }
+}
 
 // GET /api/notneeds - Get all notneeds
 router.get('/', async (req, res) => {
@@ -47,22 +76,48 @@ router.post('/', async (req, res) => {
     }
 
     // Check if user exists
-    const user = await User.findByPk(userId);
-    if (!user) {
+    const users = await executeQuery(
+      'SELECT id FROM Users WHERE id = ?', 
+      [userId]
+    );
+    
+    if (!users || users.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const newNotneed = await Notneed.create({ hate, userId });
+    // Create the notneed
+    await executeUpdate(
+      'INSERT INTO Notneeds (hate, userId, createdAt, updatedAt) VALUES (?, ?, datetime(\"now\"), datetime(\"now\"))',
+      [hate, userId]
+    );
     
-    // Return the notneed with user info
-    const notneedWithUser = await Notneed.findByPk(newNotneed.id, {
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'username']
-      }]
-    });
+    // Get the created notneed with user info
+    const createdNotneeds = await executeQuery(`
+      SELECT 
+        n.id, n.hate, n.userId,
+        u.id as user_id, u.name as user_name, u.username as user_username
+      FROM Notneeds n
+      JOIN Users u ON n.userId = u.id
+      WHERE n.userId = ? 
+      ORDER BY n.id DESC 
+      LIMIT 1
+    `, [userId]);
     
-    res.status(201).json(notneedWithUser);
+    if (createdNotneeds && createdNotneeds.length > 0) {
+      const notneedData = createdNotneeds[0];
+      res.status(201).json({
+        id: notneedData.id,
+        hate: notneedData.hate,
+        userId: notneedData.userId,
+        User: {
+          id: notneedData.user_id,
+          name: notneedData.user_name,
+          username: notneedData.user_username
+        }
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to retrieve created notneed' });
+    }
   } catch (error) {
     console.error('Error creating notneed:', error);
     res.status(500).json({ error: 'Failed to create notneed' });
@@ -106,12 +161,22 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
-    const notneed = await Notneed.findByPk(id);
-    if (!notneed) {
+    // Check if notneed exists
+    const notneeds = await executeQuery(
+      'SELECT id FROM Notneeds WHERE id = ?', 
+      [id]
+    );
+    
+    if (!notneeds || notneeds.length === 0) {
       return res.status(404).json({ error: 'Notneed not found' });
     }
 
-    await notneed.destroy();
+    // Delete the notneed
+    await executeUpdate(
+      'DELETE FROM Notneeds WHERE id = ?',
+      [id]
+    );
+    
     res.json({ message: 'Notneed deleted successfully' });
   } catch (error) {
     console.error('Error deleting notneed:', error);

@@ -2,24 +2,45 @@ const express = require('express');
 const User = require('../models/user');
 const Wish = require('../models/wish');
 const Notneed = require('../models/notneed');
+const sequelize = require('../config/database');
 const router = express.Router();
+
+// Helper function to execute Turso queries
+async function executeQuery(sql, params = []) {
+  if (sequelize.tursoClient) {
+    console.log('Executing Turso query:', sql, params);
+    const result = await sequelize.tursoClient.execute({ sql, args: params });
+    return result.rows;
+  } else {
+    const [results] = await sequelize.query(sql, { 
+      replacements: params,
+      type: sequelize.QueryTypes.SELECT 
+    });
+    return results;
+  }
+}
+
+async function executeUpdate(sql, params = []) {
+  if (sequelize.tursoClient) {
+    console.log('Executing Turso update:', sql, params);
+    const result = await sequelize.tursoClient.execute({ sql, args: params });
+    return result;
+  } else {
+    return await sequelize.query(sql, { 
+      replacements: params,
+      type: sequelize.QueryTypes.UPDATE
+    });
+  }
+}
 
 // GET /api/users - Get all users
 router.get('/', async (req, res) => {
   try {
-    const users = await User.findAll({
-      attributes: ['id', 'name', 'username', 'picture'], // Exclude password
-      include: [
-        {
-          model: Wish,
-          attributes: ['id', 'wish']
-        },
-        {
-          model: Notneed,
-          attributes: ['id', 'hate']
-        }
-      ]
-    });
+    const users = await executeQuery(`
+      SELECT id, name, username, picture 
+      FROM Users 
+      ORDER BY id
+    `);
     res.json(users);
   } catch (error) {
     console.error('Error fetching users:', error);
@@ -129,30 +150,34 @@ router.get('/:id/profile', async (req, res) => {
 router.get('/:id/wishes-and-notneeds', async (req, res) => {
   try {
     const { id } = req.params;
-    // Check if user exists
-    const user = await User.findByPk(id, {
-      attributes: ['id', 'name', 'username', 'picture']
-    });
     
-    if (!user) {
+    // Check if user exists
+    const users = await executeQuery(
+      'SELECT id, name, username, picture FROM Users WHERE id = ?', 
+      [id]
+    );
+    
+    if (!users || users.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Fetch wishes and notneeds separately for more control
-    const wishes = await Wish.findAll({
-      where: { userId: id },
-      attributes: ['id', 'wish']
-    });
+    // Fetch wishes and notneeds
+    const wishes = await executeQuery(
+      'SELECT id, wish as item FROM Wishes WHERE userId = ?', 
+      [id]
+    );
 
-    const notneeds = await Notneed.findAll({
-      where: { userId: id },
-      attributes: ['id', 'hate']
-    });
+    const notneeds = await executeQuery(
+      'SELECT id, hate as item FROM Notneeds WHERE userId = ?', 
+      [id]
+    );
+
+    console.log('Wishes found:', wishes);
     console.log('Notneeds found:', notneeds);
 
     res.json({
-      wishes,
-      notneeds
+      wishes: wishes.map(w => ({ id: w.id, wish: w.item })),
+      notneeds: notneeds.map(n => ({ id: n.id, hate: n.item }))
     });
   } catch (error) {
     console.error('Error fetching user wishes and notneeds:', error);
