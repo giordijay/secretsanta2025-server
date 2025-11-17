@@ -35,13 +35,29 @@ async function executeUpdate(sql, params = []) {
 // GET /api/notneeds - Get all notneeds
 router.get('/', async (req, res) => {
   try {
-    const notneeds = await Notneed.findAll({
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'username']
-      }]
-    });
-    res.json(notneeds);
+    // Use raw SQL query for Turso compatibility
+    const notneeds = await executeQuery(`
+      SELECT 
+        n.id, n.hate, n.userId,
+        u.id as user_id, u.name as user_name, u.username as user_username
+      FROM Notneeds n
+      JOIN Users u ON n.userId = u.id
+      ORDER BY n.id
+    `);
+    
+    // Transform to match expected format
+    const formattedNotneeds = notneeds.map(notneed => ({
+      id: notneed.id,
+      hate: notneed.hate,
+      userId: notneed.userId,
+      User: {
+        id: notneed.user_id,
+        name: notneed.user_name,
+        username: notneed.user_username
+      }
+    }));
+    
+    res.json(formattedNotneeds);
   } catch (error) {
     console.error('Error fetching notneeds:', error);
     res.status(500).json({ error: 'Failed to fetch notneeds' });
@@ -52,14 +68,31 @@ router.get('/', async (req, res) => {
 router.get('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const notneeds = await Notneed.findAll({
-      where: { userId },
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'username']
-      }]
-    });
-    res.json(notneeds);
+    
+    // Use raw SQL query for Turso compatibility
+    const notneeds = await executeQuery(`
+      SELECT 
+        n.id, n.hate, n.userId,
+        u.id as user_id, u.name as user_name, u.username as user_username
+      FROM Notneeds n
+      JOIN Users u ON n.userId = u.id
+      WHERE n.userId = ?
+      ORDER BY n.id
+    `, [userId]);
+        
+    // Transform to match expected format
+    const formattedNotneeds = notneeds.map(notneed => ({
+      id: notneed.id,
+      hate: notneed.hate,
+      userId: notneed.userId,
+      User: {
+        id: notneed.user_id,
+        name: notneed.user_name,
+        username: notneed.user_username
+      }
+    }));
+    
+    res.json(formattedNotneeds);
   } catch (error) {
     console.error('Error fetching user notneeds:', error);
     res.status(500).json({ error: 'Failed to fetch user notneeds' });
@@ -134,22 +167,47 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Hate is required' });
     }
 
-    const notneedRecord = await Notneed.findByPk(id);
-    if (!notneedRecord) {
+    // Check if notneed exists
+    const notneeds = await executeQuery(
+      'SELECT id FROM Notneeds WHERE id = ?', 
+      [id]
+    );
+    
+    if (!notneeds || notneeds.length === 0) {
       return res.status(404).json({ error: 'Notneed not found' });
     }
 
-    await notneedRecord.update({ hate });
+    // Update the notneed
+    await executeUpdate(
+      'UPDATE Notneeds SET hate = ?, updatedAt = datetime(\"now\") WHERE id = ?',
+      [hate, id]
+    );
     
-    // Return updated notneed with user info
-    const updatedNotneed = await Notneed.findByPk(id, {
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'username']
-      }]
-    });
+    // Get updated notneed with user info
+    const updatedNotneeds = await executeQuery(`
+      SELECT 
+        n.id, n.hate, n.userId,
+        u.id as user_id, u.name as user_name, u.username as user_username
+      FROM Notneeds n
+      JOIN Users u ON n.userId = u.id
+      WHERE n.id = ?
+    `, [id]);
     
-    res.json(updatedNotneed);
+    if (updatedNotneeds && updatedNotneeds.length > 0) {
+      const notneedData = updatedNotneeds[0];
+      res.json({
+        id: notneedData.id,
+        hate: notneedData.hate,
+        userId: notneedData.userId,
+        User: {
+          id: notneedData.user_id,
+          name: notneedData.user_name,
+          username: notneedData.user_username
+        }
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to retrieve updated notneed' });
+    }
   } catch (error) {
     console.error('Error updating notneed:', error);
     res.status(500).json({ error: 'Failed to update notneed' });

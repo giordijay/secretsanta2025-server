@@ -35,13 +35,29 @@ async function executeUpdate(sql, params = []) {
 // GET /api/wishes - Get all wishes
 router.get('/', async (req, res) => {
   try {
-    const wishes = await Wish.findAll({
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'username']
-      }]
-    });
-    res.json(wishes);
+    // Use raw SQL query for Turso compatibility
+    const wishes = await executeQuery(`
+      SELECT 
+        w.id, w.wish, w.userId,
+        u.id as user_id, u.name as user_name, u.username as user_username
+      FROM Wishes w
+      JOIN Users u ON w.userId = u.id
+      ORDER BY w.id
+    `);
+    
+    // Transform to match expected format
+    const formattedWishes = wishes.map(wish => ({
+      id: wish.id,
+      wish: wish.wish,
+      userId: wish.userId,
+      User: {
+        id: wish.user_id,
+        name: wish.user_name,
+        username: wish.user_username
+      }
+    }));
+    
+    res.json(formattedWishes);
   } catch (error) {
     console.error('Error fetching wishes:', error);
     res.status(500).json({ error: 'Failed to fetch wishes' });
@@ -52,14 +68,31 @@ router.get('/', async (req, res) => {
 router.get('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const wishes = await Wish.findAll({
-      where: { userId },
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'username']
-      }]
-    });
-    res.json(wishes);
+    
+    // Use raw SQL query for Turso compatibility
+    const wishes = await executeQuery(`
+      SELECT 
+        w.id, w.wish, w.userId,
+        u.id as user_id, u.name as user_name, u.username as user_username
+      FROM Wishes w
+      JOIN Users u ON w.userId = u.id
+      WHERE w.userId = ?
+      ORDER BY w.id
+    `, [userId]);
+    
+    // Transform to match expected format
+    const formattedWishes = wishes.map(wish => ({
+      id: wish.id,
+      wish: wish.wish,
+      userId: wish.userId,
+      User: {
+        id: wish.user_id,
+        name: wish.user_name,
+        username: wish.user_username
+      }
+    }));
+    
+    res.json(formattedWishes);
   } catch (error) {
     console.error('Error fetching user wishes:', error);
     res.status(500).json({ error: 'Failed to fetch user wishes' });
@@ -134,22 +167,47 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Wish is required' });
     }
 
-    const wishRecord = await Wish.findByPk(id);
-    if (!wishRecord) {
+    // Check if wish exists
+    const wishes = await executeQuery(
+      'SELECT id FROM Wishes WHERE id = ?', 
+      [id]
+    );
+    
+    if (!wishes || wishes.length === 0) {
       return res.status(404).json({ error: 'Wish not found' });
     }
 
-    await wishRecord.update({ wish });
+    // Update the wish
+    await executeUpdate(
+      'UPDATE Wishes SET wish = ?, updatedAt = datetime("now") WHERE id = ?',
+      [wish, id]
+    );
     
-    // Return updated wish with user info
-    const updatedWish = await Wish.findByPk(id, {
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'username']
-      }]
-    });
+    // Get updated wish with user info
+    const updatedWishes = await executeQuery(`
+      SELECT 
+        w.id, w.wish, w.userId,
+        u.id as user_id, u.name as user_name, u.username as user_username
+      FROM Wishes w
+      JOIN Users u ON w.userId = u.id
+      WHERE w.id = ?
+    `, [id]);
     
-    res.json(updatedWish);
+    if (updatedWishes && updatedWishes.length > 0) {
+      const wishData = updatedWishes[0];
+      res.json({
+        id: wishData.id,
+        wish: wishData.wish,
+        userId: wishData.userId,
+        User: {
+          id: wishData.user_id,
+          name: wishData.user_name,
+          username: wishData.user_username
+        }
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to retrieve updated wish' });
+    }
   } catch (error) {
     console.error('Error updating wish:', error);
     res.status(500).json({ error: 'Failed to update wish' });
